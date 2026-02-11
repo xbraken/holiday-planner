@@ -15,7 +15,7 @@ import cors from 'cors';
 const app = express();
 const PORT = 3001;
 
-const SERPAPI_KEY = process.env.SERPAPI_KEY || '68674c875f709760cf461632c7ae3ae15212b0a66c23cd6c8f9768e7d22971e1';
+const SERPAPI_KEY = process.env.SERPAPI_KEY;
 
 app.use(cors());
 app.use(express.json());
