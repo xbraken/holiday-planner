@@ -4,7 +4,6 @@ import {
   isFirebaseConfigured,
   ref,
   set,
-  push,
   remove,
   onValue,
   off,
@@ -28,16 +27,7 @@ function setLocalData(data) {
 
 const DEFAULT_DATA = {
   users: [],
-  destinations: {},
-  searchParams: {
-    startDate: '',
-    endDate: '',
-    airport: 'DUB',
-    airportName: 'Dublin',
-    travelers: 6,
-    currency: 'EUR',
-  },
-  selections: {},
+  tripPlans: {},
   flightCache: {},
   lastUpdated: Date.now(),
 };
@@ -129,6 +119,8 @@ export function useFirebase() {
     }
   }, []);
 
+  // ── Users ──
+
   const addUser = useCallback(
     (username) => {
       if (!data) return;
@@ -136,58 +128,103 @@ export function useFirebase() {
       if (!users.includes(username)) {
         updatePath('users', [...users, username]);
       }
-    },
-    [data, updatePath]
-  );
-
-  const addDestination = useCallback(
-    (destination) => {
-      if (isFirebaseConfigured) {
-        const destRef = ref(database, `${DB_PATH}/destinations`);
-        const newRef = push(destRef);
-        set(newRef, { ...destination, votes: [], createdAt: Date.now() });
-      } else {
-        const d = getLocalData() || DEFAULT_DATA;
-        const id = 'dest_' + Date.now();
-        if (!d.destinations) d.destinations = {};
-        d.destinations[id] = { ...destination, votes: [], createdAt: Date.now() };
-        d.lastUpdated = Date.now();
-        setLocalData(d);
-        setData({ ...d });
+      // Initialize trip plan if not exists
+      if (!data?.tripPlans?.[username]) {
+        updatePath(`tripPlans/${username}`, {
+          homeAirport: 'DUB',
+          homeAirportName: 'Dublin',
+          currency: 'EUR',
+          legs: {},
+        });
       }
     },
-    []
-  );
-
-  const voteDestination = useCallback(
-    (destId, username) => {
-      if (!data?.destinations?.[destId]) return;
-      const votes = data.destinations[destId].votes || [];
-      const newVotes = votes.includes(username)
-        ? votes.filter((v) => v !== username)
-        : [...votes, username];
-      updatePath(`destinations/${destId}/votes`, newVotes);
-    },
     [data, updatePath]
   );
 
-  const removeDestination = useCallback(
-    (destId) => {
-      updatePath(`destinations/${destId}`, null);
-      updatePath(`selections/${destId}`, null);
-    },
-    [updatePath]
-  );
+  // ── Trip Settings ──
 
-  const updateSearchParams = useCallback(
-    (params) => {
-      updatePath('searchParams', {
-        ...(data?.searchParams || DEFAULT_DATA.searchParams),
-        ...params,
+  const setUserSettings = useCallback(
+    (username, settings) => {
+      if (!data?.tripPlans?.[username]) return;
+      Object.entries(settings).forEach(([key, value]) => {
+        updatePath(`tripPlans/${username}/${key}`, value);
       });
     },
     [data, updatePath]
   );
+
+  // ── Legs ──
+
+  const addLeg = useCallback(
+    (username, legData) => {
+      const legs = data?.tripPlans?.[username]?.legs || {};
+      const existingOrders = Object.values(legs).map((l) => l.order);
+      const nextOrder = existingOrders.length > 0 ? Math.max(...existingOrders) + 1 : 0;
+      const legId = 'leg_' + Date.now();
+
+      updatePath(`tripPlans/${username}/legs/${legId}`, {
+        order: nextOrder,
+        destination: legData.destination,
+        departureDate: legData.departureDate || '',
+        returnDate: legData.returnDate || '',
+        outbound: null,
+        inbound: null,
+        createdAt: Date.now(),
+      });
+    },
+    [data, updatePath]
+  );
+
+  const updateLeg = useCallback(
+    (username, legId, updates) => {
+      const leg = data?.tripPlans?.[username]?.legs?.[legId];
+      if (!leg) return;
+
+      const destChanged =
+        updates.destination && updates.destination.code !== leg.destination?.code;
+      const deptDateChanged =
+        updates.departureDate !== undefined && updates.departureDate !== leg.departureDate;
+      const retDateChanged =
+        updates.returnDate !== undefined && updates.returnDate !== leg.returnDate;
+
+      const merged = { ...updates };
+      if (destChanged || deptDateChanged) merged.outbound = null;
+      if (destChanged || retDateChanged) merged.inbound = null;
+
+      Object.entries(merged).forEach(([key, value]) => {
+        updatePath(`tripPlans/${username}/legs/${legId}/${key}`, value);
+      });
+    },
+    [data, updatePath]
+  );
+
+  const removeLeg = useCallback(
+    (username, legId) => {
+      updatePath(`tripPlans/${username}/legs/${legId}`, null);
+    },
+    [updatePath]
+  );
+
+  const saveLegFlight = useCallback(
+    (username, legId, direction, flightData) => {
+      if (direction !== 'outbound' && direction !== 'inbound') return;
+      updatePath(`tripPlans/${username}/legs/${legId}/${direction}`, {
+        ...flightData,
+        selectedAt: Date.now(),
+      });
+    },
+    [updatePath]
+  );
+
+  const clearLegFlight = useCallback(
+    (username, legId, direction) => {
+      if (direction !== 'outbound' && direction !== 'inbound') return;
+      updatePath(`tripPlans/${username}/legs/${legId}/${direction}`, null);
+    },
+    [updatePath]
+  );
+
+  // ── Flight Cache ──
 
   const cacheFlights = useCallback(
     (cacheKey, flightData) => {
@@ -209,22 +246,7 @@ export function useFirebase() {
     [data]
   );
 
-  const saveUserSelection = useCallback(
-    (destId, username, selection) => {
-      updatePath(`selections/${destId}/${username}`, {
-        ...selection,
-        selectedAt: Date.now(),
-      });
-    },
-    [updatePath]
-  );
-
-  const clearUserSelection = useCallback(
-    (destId, username) => {
-      updatePath(`selections/${destId}/${username}`, null);
-    },
-    [updatePath]
-  );
+  // ── Reset ──
 
   const clearAll = useCallback(() => {
     updatePath(null, DEFAULT_DATA);
@@ -235,14 +257,14 @@ export function useFirebase() {
     connected,
     loading,
     addUser,
-    addDestination,
-    voteDestination,
-    removeDestination,
-    updateSearchParams,
+    setUserSettings,
+    addLeg,
+    updateLeg,
+    removeLeg,
+    saveLegFlight,
+    clearLegFlight,
     cacheFlights,
     getCachedFlights,
-    saveUserSelection,
-    clearUserSelection,
     clearAll,
   };
 }

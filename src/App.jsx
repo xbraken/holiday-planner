@@ -3,10 +3,16 @@ import { motion, AnimatePresence } from 'framer-motion';
 import { Loader2 } from 'lucide-react';
 import { isFirebaseConfigured } from './firebase';
 import { useFirebase } from './hooks/useFirebase';
+import {
+  getSortedLegs,
+  getOriginForLeg,
+  getInboundDestination,
+  getOriginName,
+  getInboundDestName,
+} from './utils/tripHelpers';
 import Header from './components/SessionHeader';
 import UserSelect from './components/UserSelect';
-import Destinations from './components/Destinations';
-import SearchParams from './components/SearchParams';
+import TripOverview from './components/TripOverview';
 import FlightBrowser from './components/FlightBrowser/FlightBrowser';
 
 export default function App() {
@@ -14,7 +20,6 @@ export default function App() {
     return localStorage.getItem('holiday-planner-user') || '';
   });
 
-  // FlightBrowser overlay state: { destination, destId } or null
   const [browserState, setBrowserState] = useState(null);
 
   const {
@@ -22,14 +27,14 @@ export default function App() {
     connected,
     loading,
     addUser,
-    addDestination,
-    voteDestination,
-    removeDestination,
-    updateSearchParams,
+    setUserSettings,
+    addLeg,
+    updateLeg,
+    removeLeg,
+    saveLegFlight,
+    clearLegFlight,
     cacheFlights,
     getCachedFlights,
-    saveUserSelection,
-    clearUserSelection,
     clearAll,
   } = useFirebase();
 
@@ -51,14 +56,40 @@ export default function App() {
     clearAll();
   }, [clearAll]);
 
-  // Open flight browser for a destination
-  const handleBrowse = useCallback(
-    (dest) => {
-      if (!data?.searchParams?.startDate || !data?.searchParams?.endDate) {
-        alert('Please set departure and return dates first.');
+  // Open flight browser for a specific leg
+  const handleBrowseFlights = useCallback(
+    (username, legId, direction) => {
+      const tripPlan = data?.tripPlans?.[username];
+      if (!tripPlan) return;
+
+      const sortedLegs = getSortedLegs(tripPlan.legs);
+      const legIndex = sortedLegs.findIndex((l) => l.id === legId);
+      const leg = sortedLegs[legIndex];
+      if (!leg) return;
+
+      if (!leg.departureDate || !leg.returnDate) {
+        alert('Please set dates for this leg first.');
         return;
       }
-      setBrowserState(dest);
+
+      const homeAirport = tripPlan.homeAirport || 'DUB';
+      const homeAirportName = tripPlan.homeAirportName || 'Dublin';
+
+      const originCode = getOriginForLeg(sortedLegs, legIndex, homeAirport);
+      const originNameStr = getOriginName(sortedLegs, legIndex, homeAirportName);
+      const inboundCode = getInboundDestination(sortedLegs, legIndex, homeAirport);
+      const inboundNameStr = getInboundDestName(sortedLegs, legIndex, homeAirportName);
+
+      setBrowserState({
+        username,
+        legId,
+        origin: { code: originCode, name: originNameStr },
+        destination: { code: leg.destination.code, name: leg.destination.city },
+        inboundDestination: { code: inboundCode, name: inboundNameStr },
+        outboundDate: leg.departureDate,
+        returnDate: leg.returnDate,
+        currency: tripPlan.currency || 'EUR',
+      });
     },
     [data]
   );
@@ -67,11 +98,12 @@ export default function App() {
   const handleConfirmSelection = useCallback(
     (selection) => {
       if (browserState) {
-        saveUserSelection(browserState.id, currentUser, selection);
+        saveLegFlight(browserState.username, browserState.legId, 'outbound', selection.outbound);
+        saveLegFlight(browserState.username, browserState.legId, 'inbound', selection.inbound);
         setBrowserState(null);
       }
     },
-    [browserState, currentUser, saveUserSelection]
+    [browserState, saveLegFlight]
   );
 
   if (loading) {
@@ -130,23 +162,16 @@ export default function App() {
             animate={{ opacity: 1 }}
             className="space-y-3 sm:space-y-4"
           >
-            <Destinations
-              destinations={data?.destinations}
-              selections={data?.selections}
-              currentUser={currentUser}
+            <TripOverview
+              tripPlans={data?.tripPlans}
               allUsers={users}
-              currency={data?.searchParams?.currency || 'EUR'}
-              onAdd={addDestination}
-              onVote={voteDestination}
-              onRemove={removeDestination}
-              onBrowse={handleBrowse}
-              onClearSelection={clearUserSelection}
-              searchParams={data?.searchParams}
-            />
-
-            <SearchParams
-              params={data?.searchParams}
-              onUpdate={updateSearchParams}
+              currentUser={currentUser}
+              onBrowseFlights={handleBrowseFlights}
+              onAddLeg={addLeg}
+              onRemoveLeg={removeLeg}
+              onUpdateLeg={updateLeg}
+              onClearFlight={clearLegFlight}
+              onUpdateSettings={setUserSettings}
             />
           </motion.div>
         )}
@@ -160,11 +185,14 @@ export default function App() {
 
       {/* FlightBrowser overlay */}
       <AnimatePresence>
-        {browserState && data?.searchParams && (
+        {browserState && (
           <FlightBrowser
-            destination={browserState}
-            searchParams={data.searchParams}
-            currentUser={currentUser}
+            origin={browserState.origin}
+            destination={browserState.destination}
+            inboundDestination={browserState.inboundDestination}
+            outboundDate={browserState.outboundDate}
+            returnDate={browserState.returnDate}
+            currency={browserState.currency}
             getCachedFlights={getCachedFlights}
             cacheFlights={cacheFlights}
             onClose={() => setBrowserState(null)}

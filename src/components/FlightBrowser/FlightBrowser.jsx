@@ -7,7 +7,7 @@ import {
   ExternalLink,
   Calendar,
 } from 'lucide-react';
-import { searchFlightsOneWay, buildCacheKey, resolveAirportCode } from '../../hooks/useApiSearch';
+import { searchFlightsOneWay, buildCacheKey } from '../../hooks/useApiSearch';
 import { cs } from '../../utils/currency';
 import FlightFilters from './FlightFilters';
 import FlightList from './FlightList';
@@ -19,16 +19,36 @@ function formatDate(dateStr) {
   return d.toLocaleDateString('en-GB', { weekday: 'short', day: 'numeric', month: 'short' });
 }
 
+function buildFlightSummary(flight) {
+  return {
+    airline: flight.mainAirline,
+    airlineLogo: flight.airlineLogo,
+    departureTime: flight.departureTime,
+    arrivalTime: flight.arrivalTime,
+    departureCode: flight.departureCode,
+    arrivalCode: flight.arrivalCode,
+    duration: flight.totalDuration,
+    stops: flight.stops,
+    price: flight.price,
+    legs: flight.legs,
+    layovers: flight.layovers,
+    extensions: flight.extensions,
+  };
+}
+
 export default function FlightBrowser({
+  origin,
   destination,
-  searchParams,
-  currentUser,
+  inboundDestination,
+  outboundDate,
+  returnDate,
+  currency,
   getCachedFlights,
   cacheFlights,
   onClose,
   onConfirm,
 }) {
-  const [step, setStep] = useState('outbound'); // 'outbound' | 'return'
+  const [step, setStep] = useState('outbound');
   const [outboundFlights, setOutboundFlights] = useState([]);
   const [returnFlights, setReturnFlights] = useState([]);
   const [outboundMeta, setOutboundMeta] = useState({});
@@ -39,16 +59,14 @@ export default function FlightBrowser({
   const [error, setError] = useState(null);
   const [filters, setFilters] = useState({ sortBy: 'price', maxStops: null });
 
-  const departureCode = searchParams.airport || 'DUB';
-  const arrivalCode = resolveAirportCode(destination.city) || destination.code;
-  const currency = searchParams.currency || 'EUR';
-  const outboundDate = searchParams.startDate;
-  const returnDate = searchParams.endDate;
+  const departureCode = origin.code;
+  const arrivalCode = destination.code;
+  const inboundDestCode = inboundDestination.code;
+  const cur = currency || 'EUR';
 
   const outboundCacheKey = buildCacheKey(departureCode, arrivalCode, outboundDate);
-  const returnCacheKey = buildCacheKey(arrivalCode, departureCode, returnDate);
+  const returnCacheKey = buildCacheKey(arrivalCode, inboundDestCode, returnDate);
 
-  // Load flights on mount - check cache first
   useEffect(() => {
     let cancelled = false;
 
@@ -57,17 +75,15 @@ export default function FlightBrowser({
       setError(null);
 
       try {
-        // Check outbound cache
         let obData = getCachedFlights(outboundCacheKey);
         if (!obData) {
-          obData = await searchFlightsOneWay(departureCode, arrivalCode, outboundDate, currency);
+          obData = await searchFlightsOneWay(departureCode, arrivalCode, outboundDate, cur);
           if (!cancelled) cacheFlights(outboundCacheKey, obData);
         }
 
-        // Check return cache
         let retData = getCachedFlights(returnCacheKey);
         if (!retData) {
-          retData = await searchFlightsOneWay(arrivalCode, departureCode, returnDate, currency);
+          retData = await searchFlightsOneWay(arrivalCode, inboundDestCode, returnDate, cur);
           if (!cancelled) cacheFlights(returnCacheKey, retData);
         }
 
@@ -88,7 +104,7 @@ export default function FlightBrowser({
 
     load();
     return () => { cancelled = true; };
-  }, [departureCode, arrivalCode, outboundDate, returnDate, currency]);
+  }, [departureCode, arrivalCode, inboundDestCode, outboundDate, returnDate, cur]);
 
   const handleConfirm = useCallback(() => {
     if (!selectedOutbound || !selectedReturn) return;
@@ -98,53 +114,30 @@ export default function FlightBrowser({
         flightId: selectedOutbound.id,
         cacheKey: outboundCacheKey,
         date: outboundDate,
-        summary: {
-          airline: selectedOutbound.mainAirline,
-          airlineLogo: selectedOutbound.airlineLogo,
-          departureTime: selectedOutbound.departureTime,
-          arrivalTime: selectedOutbound.arrivalTime,
-          departureCode: selectedOutbound.departureCode,
-          arrivalCode: selectedOutbound.arrivalCode,
-          duration: selectedOutbound.totalDuration,
-          stops: selectedOutbound.stops,
-          price: selectedOutbound.price,
-          legs: selectedOutbound.legs,
-          layovers: selectedOutbound.layovers,
-          extensions: selectedOutbound.extensions,
-        },
+        summary: buildFlightSummary(selectedOutbound),
       },
-      return: {
+      inbound: {
         flightId: selectedReturn.id,
         cacheKey: returnCacheKey,
         date: returnDate,
-        summary: {
-          airline: selectedReturn.mainAirline,
-          airlineLogo: selectedReturn.airlineLogo,
-          departureTime: selectedReturn.departureTime,
-          arrivalTime: selectedReturn.arrivalTime,
-          departureCode: selectedReturn.departureCode,
-          arrivalCode: selectedReturn.arrivalCode,
-          duration: selectedReturn.totalDuration,
-          stops: selectedReturn.stops,
-          price: selectedReturn.price,
-          legs: selectedReturn.legs,
-          layovers: selectedReturn.layovers,
-          extensions: selectedReturn.extensions,
-        },
+        summary: buildFlightSummary(selectedReturn),
       },
-      totalPerPerson: selectedOutbound.price + selectedReturn.price,
-      googleFlightsUrl: outboundMeta.googleFlightsUrl || returnMeta.googleFlightsUrl || '',
     });
-  }, [selectedOutbound, selectedReturn, outboundCacheKey, returnCacheKey, outboundDate, returnDate, outboundMeta, returnMeta, onConfirm]);
+  }, [selectedOutbound, selectedReturn, outboundCacheKey, returnCacheKey, outboundDate, returnDate, onConfirm]);
 
-  const sym = cs(currency);
+  const sym = cs(cur);
   const currentFlights = step === 'outbound' ? outboundFlights : returnFlights;
   const currentMeta = step === 'outbound' ? outboundMeta : returnMeta;
   const currentDate = step === 'outbound' ? outboundDate : returnDate;
   const currentSelected = step === 'outbound' ? selectedOutbound : selectedReturn;
-  const currentRoute = step === 'outbound'
-    ? `${departureCode} \u2192 ${arrivalCode}`
-    : `${arrivalCode} \u2192 ${departureCode}`;
+
+  const outboundRoute = `${departureCode} \u2192 ${arrivalCode}`;
+  const inboundRoute = `${arrivalCode} \u2192 ${inboundDestCode}`;
+  const currentRoute = step === 'outbound' ? outboundRoute : inboundRoute;
+
+  const stepLabel = step === 'outbound'
+    ? `Flight to ${destination.name}`
+    : `Flight to ${inboundDestination.name}`;
 
   return (
     <motion.div
@@ -166,7 +159,7 @@ export default function FlightBrowser({
             </button>
             <div className="flex-1 min-w-0">
               <h2 className="text-base font-semibold text-gray-800 truncate">
-                {destination.city}
+                {destination.name}
                 <span className="text-gray-400 font-normal ml-2 text-sm">{currentRoute}</span>
               </h2>
               <div className="flex items-center gap-2 text-xs text-gray-500">
@@ -174,28 +167,25 @@ export default function FlightBrowser({
                 <span>{formatDate(currentDate)}</span>
                 <span className="text-gray-300">|</span>
                 <Plane className={`w-3 h-3 ${step === 'return' ? 'rotate-180' : ''}`} />
-                <span className="font-medium text-blue-600">
-                  {step === 'outbound' ? 'Select outbound' : 'Select return'}
-                </span>
+                <span className="font-medium text-blue-600">{stepLabel}</span>
               </div>
             </div>
           </div>
 
-          {/* Step indicator */}
           <div className="flex gap-2 mt-3">
-            <div className={`flex-1 h-1 rounded-full ${step === 'outbound' ? 'bg-blue-500' : 'bg-blue-500'}`} />
+            <div className={`flex-1 h-1 rounded-full bg-blue-500`} />
             <div className={`flex-1 h-1 rounded-full ${step === 'return' ? 'bg-blue-500' : 'bg-gray-200'}`} />
           </div>
         </div>
       </div>
 
-      {/* Selected outbound context bar (shown during return step) */}
+      {/* Selected outbound context bar */}
       {step === 'return' && selectedOutbound && (
         <div className="bg-blue-50 border-b border-blue-100 shrink-0">
           <div className="max-w-2xl mx-auto px-4 py-2 flex items-center gap-2">
             <Plane className="w-3.5 h-3.5 text-blue-600 shrink-0" />
             <span className="text-xs text-blue-700">
-              Outbound: {selectedOutbound.mainAirline} {selectedOutbound.departureTime}
+              {outboundRoute}: {selectedOutbound.mainAirline} {selectedOutbound.departureTime}
               {' \u2192 '}{selectedOutbound.arrivalTime}
               <span className="font-semibold ml-1">{sym}{selectedOutbound.price}</span>
             </span>
@@ -229,7 +219,7 @@ export default function FlightBrowser({
             <FlightList
               flights={currentFlights}
               filters={filters}
-              currency={currency}
+              currency={cur}
               selectedId={currentSelected?.id}
               onSelect={(flight) => {
                 if (step === 'outbound') {
@@ -241,7 +231,6 @@ export default function FlightBrowser({
             />
           )}
 
-          {/* Google Flights link */}
           {currentMeta.googleFlightsUrl && !loading && (
             <div className="px-4 sm:px-0 mt-4">
               <a
@@ -263,7 +252,7 @@ export default function FlightBrowser({
         step={step}
         selectedOutbound={selectedOutbound}
         selectedReturn={selectedReturn}
-        currency={currency}
+        currency={cur}
         onNextStep={() => {
           setStep('return');
           setFilters({ sortBy: 'price', maxStops: null });
