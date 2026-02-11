@@ -10,6 +10,7 @@ import {
   getOriginName,
   getInboundDestName,
 } from './utils/tripHelpers';
+import { resolveAirportCode } from './hooks/useApiSearch';
 import Header from './components/SessionHeader';
 import UserSelect from './components/UserSelect';
 import TripOverview from './components/TripOverview';
@@ -80,11 +81,18 @@ export default function App() {
       const inboundCode = getInboundDestination(sortedLegs, legIndex, homeAirport);
       const inboundNameStr = getInboundDestName(sortedLegs, legIndex, homeAirportName);
 
+      // Resolve airport codes - destination.code may be empty for custom entries
+      const destCode = leg.destination.code || resolveAirportCode(leg.destination.city);
+      if (!destCode) {
+        alert(`Could not find airport code for "${leg.destination.city}". Try picking from the dropdown.`);
+        return;
+      }
+
       setBrowserState({
         username,
         legId,
         origin: { code: originCode, name: originNameStr },
-        destination: { code: leg.destination.code, name: leg.destination.city },
+        destination: { code: destCode, name: leg.destination.city },
         inboundDestination: { code: inboundCode, name: inboundNameStr },
         outboundDate: leg.departureDate,
         returnDate: leg.returnDate,
