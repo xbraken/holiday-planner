@@ -1,4 +1,4 @@
-import { useState, useCallback } from 'react';
+import { useState, useCallback, useEffect } from 'react';
 import { motion, AnimatePresence } from 'framer-motion';
 import { Loader2 } from 'lucide-react';
 import { isFirebaseConfigured } from './firebase';
@@ -53,8 +53,23 @@ export default function App() {
     localStorage.setItem('holiday-planner-user', name);
   }, []);
 
+  // Re-register user if they're in localStorage but missing from data
+  useEffect(() => {
+    if (currentUser && data && !loading) {
+      const users = data.users || [];
+      if (!users.includes(currentUser)) {
+        addUser(currentUser);
+      } else if (!data.tripPlans?.[currentUser]) {
+        // User exists but no trip plan - init one
+        addUser(currentUser);
+      }
+    }
+  }, [currentUser, data, loading, addUser]);
+
   const handleClear = useCallback(() => {
     clearAll();
+    setCurrentUser('');
+    localStorage.removeItem('holiday-planner-user');
   }, [clearAll]);
 
   // Open flight browser for a specific leg
