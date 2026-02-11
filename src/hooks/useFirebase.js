@@ -128,14 +128,13 @@ export function useFirebase() {
       if (!users.includes(username)) {
         updatePath('users', [...users, username]);
       }
-      // Initialize trip plan if not exists
-      if (!data?.tripPlans?.[username]) {
-        updatePath(`tripPlans/${username}`, {
-          homeAirport: 'DUB',
-          homeAirportName: 'Dublin',
-          currency: 'EUR',
-          legs: {},
-        });
+      // Initialize trip plan ONLY if the key truly doesn't exist at all.
+      // Use individual field writes so we never overwrite existing legs.
+      const plan = data?.tripPlans?.[username];
+      if (!plan) {
+        updatePath(`tripPlans/${username}/homeAirport`, 'DUB');
+        updatePath(`tripPlans/${username}/homeAirportName`, 'Dublin');
+        updatePath(`tripPlans/${username}/currency`, 'EUR');
       }
     },
     [data, updatePath]

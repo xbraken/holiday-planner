@@ -53,18 +53,17 @@ export default function App() {
     localStorage.setItem('holiday-planner-user', name);
   }, []);
 
-  // Re-register user if they're in localStorage but missing from data
+  // Re-register user if they're in localStorage but missing from users list
+  // Only runs once after initial load to avoid race conditions
+  const [hasReregistered, setHasReregistered] = useState(false);
   useEffect(() => {
-    if (currentUser && data && !loading) {
-      const users = data.users || [];
-      if (!users.includes(currentUser)) {
-        addUser(currentUser);
-      } else if (!data.tripPlans?.[currentUser]) {
-        // User exists but no trip plan - init one
-        addUser(currentUser);
-      }
+    if (hasReregistered || !currentUser || !data || loading) return;
+    const users = data.users || [];
+    if (!users.includes(currentUser)) {
+      addUser(currentUser);
     }
-  }, [currentUser, data, loading, addUser]);
+    setHasReregistered(true);
+  }, [currentUser, data, loading, hasReregistered, addUser]);
 
   const handleClear = useCallback(() => {
     clearAll();
